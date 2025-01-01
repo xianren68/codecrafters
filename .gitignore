@@ -1,0 +1,46 @@
+# Go项目
+/bin/
+/pkg/
+/out/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.log
+
+# Go module files
+go.sum
+go.work
+
+# Rust项目
+/target/
+/Cargo.lock
+
+# Rust artifacts
+*.rs.bk
+*.rs.tmp
+
+# Zig项目
+zig-cache/
+/zig-out/
+
+# 通用文件和目录
+*.o
+*.a
+*.obj
+*.swp
+*.DS_Store
+*.log
+*.bak
+*.tmp
+*.~*
+*.vscode/
+.idea/
+*.iml
+
+# IDE/编辑器相关
+*.code-workspace
+*.swp
+*~
