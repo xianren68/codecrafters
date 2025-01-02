@@ -12,11 +12,11 @@ import (
 // 重定向配置
 type DirectOpt struct {
 	isAppend bool
-	isStderr bool
+	isStdErr bool
 	path     string
 }
 
-type Handler = func([]string) string
+type Handler = func([]string) (string, error)
 
 var handlerMap map[string]Handler
 
@@ -28,6 +28,7 @@ func main() {
 	scanner := bufio.NewScanner(os.Stdin)
 	var err error
 	var args []string
+	var reList []*DirectOpt
 	out := bufio.NewWriter(os.Stdout)
 	for {
 		_, _ = out.WriteString("$ ")
@@ -36,30 +37,30 @@ func main() {
 			return
 		}
 		line := scanner.Text()
-		args, err = ParseArgs(line)
+		args, reList, err = ParseArgs(line)
 		if err != nil {
 			out.WriteString(err.Error() + "\n")
 			out.Flush()
 			continue
 		}
 		if len(args) == 0 {
-			out.WriteString("\n")
-			out.Flush()
+			outPut("", nil, out, reList)
 			continue
 		}
 		command := args[0]
 		var str string
 		if handler, ok := handlerMap[command]; ok {
-			str = handler(args[1:])
+			str, err = handler(args[1:])
+			outPut(str, err, out, reList)
 		} else {
 			str = fmt.Sprintf("%s: command not found\n", command)
+			out.WriteString(str)
+			out.Flush()
 		}
-		out.WriteString(str)
-		out.Flush()
 	}
 }
 
-func handleExit(args []string) string {
+func handleExit(args []string) (string, error) {
 	if len(args) == 0 {
 		os.Exit(0)
 	}
@@ -69,32 +70,34 @@ func handleExit(args []string) string {
 		code = 2
 	}
 	os.Exit(code)
-	return ""
+	return "", nil
 }
 
-func handleEcho(args []string) string {
+func handleEcho(args []string) (string, error) {
 	if len(args) == 0 {
-		return "\n"
+		return "\n", nil
 	}
-	return strings.Join(args, " ") + "\n"
+	return strings.Join(args, " ") + "\n", nil
 }
 
-func handleType(args []string) string {
+func handleType(args []string) (string, error) {
 	if len(args) == 0 {
-		return "\n"
+		return "\n", nil
 	}
+	var err error
 	res := strings.Builder{}
 	for _, val := range args {
 		if _, ok := handlerMap[val]; ok {
 			res.WriteString(fmt.Sprintf("%s is a shell builtin\n", val))
 		} else {
-			res.WriteString(fmt.Sprintf("%s: not found\n", val))
+			err = fmt.Errorf("%s: not found\n", val)
 		}
 	}
-	return res.String()
+	return res.String(), err
 }
 
-func ParseArgs(args string) ([]string, error) {
+// ParseArgs 解析参数
+func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 	// 是否单引号内
 	inSingalQuote := false
 	// 是否双引号内
@@ -103,6 +106,9 @@ func ParseArgs(args string) ([]string, error) {
 	escapeNext := false
 	// 解析出的每一项
 	item := make([]byte, 0, 1024)
+	// 是否重定向
+	var Redirect *DirectOpt = nil
+	var optList []*DirectOpt = nil
 	// 解析结果
 	res := make([]string, 0, 20)
 	for i := 0; i < len(args); i++ {
@@ -146,7 +152,17 @@ func ParseArgs(args string) ([]string, error) {
 				escapeNext = true
 			case ' ':
 				if len(item) > 0 {
-					res = append(res, string(item))
+					if Redirect != nil {
+						optList = append(optList, Redirect)
+						Redirect.path = string(item)
+						Redirect = nil
+						item = make([]byte, 0, 1024)
+						continue
+					}
+					Redirect = isRedirect(string(item))
+					if Redirect == nil {
+						res = append(res, string(item))
+					}
 					item = make([]byte, 0, 1024)
 				}
 			default:
@@ -155,10 +171,77 @@ func ParseArgs(args string) ([]string, error) {
 		}
 	}
 	if inSingalQuote || inDoubleQuote {
-		return nil, errors.New("unclosed quote")
+		return nil, nil, errors.New("unclosed quote")
 	}
 	if len(item) != 0 {
-		res = append(res, string(item))
+		if Redirect != nil {
+			optList = append(optList, Redirect)
+			Redirect.path = string(item)
+		} else {
+			res = append(res, string(item))
+		}
 	}
-	return res, nil
+	return res, optList, nil
+}
+
+func isRedirect(val string) *DirectOpt {
+	switch val {
+	case ">", "1>":
+		return &DirectOpt{}
+	case ">>", "1>>":
+		return &DirectOpt{isAppend: true}
+	case "2>":
+		return &DirectOpt{isStdErr: true}
+	case "2>>":
+		return &DirectOpt{isAppend: true, isStdErr: true}
+	default:
+		return nil
+	}
+}
+
+func outPut(val string, errVal error, out *bufio.Writer, reList []*DirectOpt) {
+	if len(reList) == 0 {
+		if errVal != nil {
+			out.WriteString(errVal.Error())
+		} else {
+			out.WriteString(val)
+		}
+		out.Flush()
+		return
+	}
+	if errVal == nil {
+		errVal = errors.New("")
+	}
+	var err error
+	for _, opt := range reList {
+		if opt.isStdErr {
+			err = reToFile(errVal.Error(), opt.path, opt.isAppend)
+		} else {
+			err = reToFile(val, opt.path, opt.isAppend)
+		}
+		if err != nil {
+			out.WriteString(err.Error())
+			out.WriteByte('\n')
+			out.Flush()
+		}
+	}
+}
+
+// 重定向到文件
+func reToFile(val, path string, isAppend bool) error {
+	if path == "" {
+		return errors.New("syntax error near unexpected token `newline'")
+	}
+	var file *os.File
+	var err error
+	flag := os.O_RDWR | os.O_CREATE
+	if isAppend {
+		flag |= os.O_APPEND
+	}
+	file, err = os.OpenFile(path, flag, 0644)
+	if err != nil {
+		return err
+	}
+	file.WriteString(val)
+	return file.Close()
 }
