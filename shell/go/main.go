@@ -25,6 +25,8 @@ func main() {
 	handlerMap["exit"] = handleExit
 	handlerMap["echo"] = handleEcho
 	handlerMap["type"] = handleType
+	handlerMap["cd"] = handleCd
+	handlerMap["pwd"] = handlePwd
 	scanner := bufio.NewScanner(os.Stdin)
 	var err error
 	var args []string
@@ -89,11 +91,30 @@ func handleType(args []string) (string, error) {
 	for _, val := range args {
 		if _, ok := handlerMap[val]; ok {
 			res.WriteString(fmt.Sprintf("%s is a shell builtin\n", val))
+		} else if flag, cp := isExucutable(val); flag {
+			res.WriteString(fmt.Sprintf("%s is %s\n", val, cp))
 		} else {
-			err = fmt.Errorf("%s: not found\n", val)
+			err = fmt.Errorf("%s: not found", val)
 		}
 	}
 	return res.String(), err
+}
+
+func handlePwd(args []string) (string, error) {
+	_ = args
+	s, err := os.Getwd()
+	if err != nil {
+		err = errors.New(err.Error() + "\n")
+	}
+	return s + "\n", err
+}
+
+func handleCd(args []string) (string, error) {
+	if len(args) > 1 {
+		return "", errors.New("cd: too many arguments")
+	}
+	err := os.Chdir(args[0])
+	return "", err
 }
 
 // ParseArgs 解析参数
@@ -184,6 +205,7 @@ func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 	return res, optList, nil
 }
 
+// 重定向
 func isRedirect(val string) *DirectOpt {
 	switch val {
 	case ">", "1>":
@@ -199,10 +221,12 @@ func isRedirect(val string) *DirectOpt {
 	}
 }
 
+// 输出
 func outPut(val string, errVal error, out *bufio.Writer, reList []*DirectOpt) {
 	if len(reList) == 0 {
 		if errVal != nil {
 			out.WriteString(errVal.Error())
+			out.WriteByte('\n')
 		} else {
 			out.WriteString(val)
 		}
@@ -244,4 +268,23 @@ func reToFile(val, path string, isAppend bool) error {
 	}
 	file.WriteString(val)
 	return file.Close()
+}
+
+func isExucutable(command string) (bool, string) {
+	// 获取环境变量
+	pathEnv := os.Getenv("PATH")
+	paths := strings.Split(pathEnv, ":")
+	for _, path := range paths {
+		completePath := path + "/" + command
+		file, err := os.OpenFile(completePath, os.O_RDONLY, 0644)
+		if err != nil {
+			continue
+		}
+		info, err := file.Stat()
+		if err != nil || info.Mode()&0o100 == 0 {
+			continue
+		}
+		return true, completePath
+	}
+	return false, ""
 }
