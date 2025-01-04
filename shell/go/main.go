@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -54,6 +56,9 @@ func main() {
 		if handler, ok := handlerMap[command]; ok {
 			str, err = handler(args[1:])
 			outPut(str, err, out, reList)
+		} else if flag, fullPath := isExecutable(command); flag {
+			str, err = execution(fullPath, args[1:])
+			outPut(str, err, out, reList)
 		} else {
 			str = fmt.Sprintf("%s: command not found\n", command)
 			out.WriteString(str)
@@ -91,7 +96,7 @@ func handleType(args []string) (string, error) {
 	for _, val := range args {
 		if _, ok := handlerMap[val]; ok {
 			res.WriteString(fmt.Sprintf("%s is a shell builtin\n", val))
-		} else if flag, cp := isExucutable(val); flag {
+		} else if flag, cp := isExecutable(val); flag {
 			res.WriteString(fmt.Sprintf("%s is %s\n", val, cp))
 		} else {
 			err = fmt.Errorf("%s: not found", val)
@@ -112,6 +117,9 @@ func handlePwd(args []string) (string, error) {
 func handleCd(args []string) (string, error) {
 	if len(args) > 1 {
 		return "", errors.New("cd: too many arguments")
+	}
+	if args[0] == "~" {
+		args[0] = os.Getenv("HOME")
 	}
 	err := os.Chdir(args[0])
 	return "", err
@@ -270,7 +278,7 @@ func reToFile(val, path string, isAppend bool) error {
 	return file.Close()
 }
 
-func isExucutable(command string) (bool, string) {
+func isExecutable(command string) (bool, string) {
 	// 获取环境变量
 	pathEnv := os.Getenv("PATH")
 	paths := strings.Split(pathEnv, ":")
@@ -287,4 +295,17 @@ func isExucutable(command string) (bool, string) {
 		return true, completePath
 	}
 	return false, ""
+}
+
+// 执行可执行文件
+func execution(command string, args []string) (string, error) {
+	cmd := exec.Command(command, args...)
+	var stdStr, errStr bytes.Buffer
+	cmd.Stdout = &stdStr
+	cmd.Stderr = &errStr
+	err := cmd.Run()
+	if err != nil {
+		return "", err
+	}
+	return stdStr.String(), nil
 }
