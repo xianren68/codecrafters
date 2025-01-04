@@ -15,8 +15,8 @@ go.sum
 go.work
 
 # Rust项目
-/target/
-/Cargo.lock
+target/
+*.lock
 
 # Rust artifacts
 *.rs.bk

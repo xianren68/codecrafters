@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// 重定向配置
+// DirectOpt 重定向配置
 type DirectOpt struct {
 	isAppend bool
 	isStdErr bool
@@ -82,16 +82,15 @@ func handleExit(args []string) (string, error) {
 
 func handleEcho(args []string) (string, error) {
 	if len(args) == 0 {
-		return "\n", nil
+		return "", nil
 	}
 	return strings.Join(args, " ") + "\n", nil
 }
 
 func handleType(args []string) (string, error) {
 	if len(args) == 0 {
-		return "\n", nil
+		return "", nil
 	}
-	var err error
 	res := strings.Builder{}
 	for _, val := range args {
 		if _, ok := handlerMap[val]; ok {
@@ -99,10 +98,10 @@ func handleType(args []string) (string, error) {
 		} else if flag, cp := isExecutable(val); flag {
 			res.WriteString(fmt.Sprintf("%s is %s\n", val, cp))
 		} else {
-			err = fmt.Errorf("%s: not found", val)
+			res.WriteString(fmt.Sprintf("%s: not found\n", val))
 		}
 	}
-	return res.String(), err
+	return res.String(), nil
 }
 
 func handlePwd(args []string) (string, error) {
@@ -161,9 +160,7 @@ func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 				item = append(item, val)
 			}
 		} else if inSingalQuote {
-			if val == '\\' {
-				escapeNext = true
-			} else if val == '\'' {
+			if val == '\'' {
 				inSingalQuote = false
 			} else {
 				item = append(item, val)
@@ -178,7 +175,7 @@ func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 			case '\'':
 				inSingalQuote = true
 			case '"':
-				escapeNext = true
+				inDoubleQuote = true
 			case ' ':
 				if len(item) > 0 {
 					if Redirect != nil {
