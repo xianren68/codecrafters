@@ -18,6 +18,8 @@ type DirectOpt struct {
 	path     string
 }
 
+var osSystem = os.Getenv("OS")
+
 type Handler = func([]string) (string, error)
 
 var handlerMap map[string]Handler
@@ -114,11 +116,18 @@ func handlePwd(args []string) (string, error) {
 }
 
 func handleCd(args []string) (string, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
 	if len(args) > 1 {
 		return "", errors.New("cd: too many arguments")
 	}
+	homeVar := "HOME"
+	if osSystem == "Windows_NT" {
+		homeVar = "USERPROFILE"
+	}
 	if args[0] == "~" {
-		args[0] = os.Getenv("HOME")
+		args[0] = os.Getenv(homeVar)
 	}
 	err := os.Chdir(args[0])
 	return "", err
@@ -199,6 +208,9 @@ func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 	if inSingalQuote || inDoubleQuote {
 		return nil, nil, errors.New("unclosed quote")
 	}
+	if len(item) == 0 && Redirect != nil {
+		return nil, nil, errors.New("syntax error near unexpected token `newline'")
+	}
 	if len(item) != 0 {
 		if Redirect != nil {
 			optList = append(optList, Redirect)
@@ -278,15 +290,21 @@ func reToFile(val, path string, isAppend bool) error {
 func isExecutable(command string) (bool, string) {
 	// 获取环境变量
 	pathEnv := os.Getenv("PATH")
-	paths := strings.Split(pathEnv, ":")
+	split := ":"
+	suffix := ""
+	if osSystem == "Windows_NT" {
+		split = ";"
+		suffix = ".exe"
+	}
+	paths := strings.Split(pathEnv, split)
 	for _, path := range paths {
-		completePath := path + "/" + command
-		file, err := os.OpenFile(completePath, os.O_RDONLY, 0644)
-		if err != nil {
-			continue
+		completePath := path + "/" + command + suffix
+		info, err := os.Stat(completePath)
+		notExec := false
+		if osSystem == "linux" {
+			notExec = info.Mode()&0o111 == 0
 		}
-		info, err := file.Stat()
-		if err != nil || info.Mode()&0o100 == 0 {
+		if err != nil || notExec {
 			continue
 		}
 		return true, completePath
