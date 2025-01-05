@@ -300,11 +300,14 @@ func isExecutable(command string) (bool, string) {
 	for _, path := range paths {
 		completePath := path + "/" + command + suffix
 		info, err := os.Stat(completePath)
+		if err != nil || info.IsDir() {
+			continue
+		}
 		notExec := false
-		if osSystem == "linux" {
+		if osSystem != "Windows_NT" {
 			notExec = info.Mode()&0o111 == 0
 		}
-		if err != nil || notExec {
+		if notExec {
 			continue
 		}
 		return true, completePath

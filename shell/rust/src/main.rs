@@ -1,16 +1,25 @@
 use std::collections::HashMap;
-use std::process;
+use std::{env, process};
 use std::sync::OnceLock;
 use::std::fmt::Write as FmtWrite;
 use std::io::{self, BufReader, BufWriter, BufRead, Write};
+use std::path::Path;
+
 type Handler = fn(&[String]) -> Result<String, String>;
 static GLOBAL_MAP: OnceLock<HashMap<String, Handler>> = OnceLock::new();
+struct RedirectOpt {
+    is_stderr: bool,
+    is_append: bool,
+    path: String,
+}
 fn init_map() -> &'static HashMap<String, Handler> {
     GLOBAL_MAP.get_or_init(|| {
         let mut map:HashMap<String, Handler> = HashMap::new();
         map.insert("exit".to_string(), handle_exit);
         map.insert("echo".to_string(), handle_echo);
         map.insert("type".to_string(), handle_type);
+        map.insert("cd".to_string(), handle_cd);
+        map.insert("pwd".to_string(), handle_pwd);
         map
     })
 }
@@ -23,6 +32,10 @@ fn main() {
         writer.flush().unwrap();
         let mut line = String::new();
         reader.read_line(&mut line).unwrap();
+        line.pop().unwrap();
+        if cfg!(target_os = "windows") {
+            line.pop().unwrap();
+        }
         match parse_args(line) {
             Ok(args) => {
                 if args.is_empty() {
@@ -58,7 +71,7 @@ fn handle_echo(args: &[String]) -> Result<String, String> {
     if args.len() == 0 {
         return Ok("".to_string());
     }
-    let res = args.join(" ");
+    let res = args.join(" ") + "\n";
     Ok(res)
 }
 
@@ -76,6 +89,47 @@ fn handle_type(args: &[String]) -> Result<String, String> {
         }
     }
     Ok(res)
+}
+
+fn handle_pwd(args: &[String]) -> Result<String, String> {
+    match env::current_dir() {
+        Ok(dir) => {
+            Ok(dir.into_os_string().into_string().unwrap() + "\n")
+        },
+        Err(err) => {
+            Err(err.to_string() + "\n")
+        }
+    }
+}
+
+fn handle_cd(args: &[String]) -> Result<String, String> {
+    if args.len() == 0 {
+        return Ok("".to_string());
+    }
+    if args.len() > 1 {
+        return Err("cd: too many arguments".to_string());
+    }
+    if args[0] == "~" {
+        let sys = if cfg!(target_os = "windows") {
+            "USERPROFILE"
+        }else {
+            "HOME"
+        };
+        let path = Path::new(sys);
+        return match env::set_current_dir(path) {
+            Ok(_) => Ok("".to_string()),
+            Err(err) => {
+                Err(err.to_string())
+            }
+        }
+    }
+    let path = Path::new(args[0].as_str());
+    match env::set_current_dir(path) {
+        Ok(_) => Ok("".to_string()),
+        Err(err) => {
+            Err(err.to_string())
+        }
+    }
 }
 
 fn parse_args(args: String) -> Result<Vec<String>, String> {
@@ -120,6 +174,7 @@ fn parse_args(args: String) -> Result<Vec<String>, String> {
                     if item.len() != 0 {
                         res.push(item.clone());
                         item.clear();
+
                     }
                 }
                 _ => {
@@ -132,7 +187,7 @@ fn parse_args(args: String) -> Result<Vec<String>, String> {
         return Err("unclosed quotes".to_string());
     }
     if item.len() != 0 {
-        res.push(item.clone());
+        res.push(item);
     }
     Ok(res)
 }
