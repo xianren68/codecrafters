@@ -4,7 +4,7 @@ use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::sync::OnceLock;
 use std::{env, fs, process};
-
+use std::fs::OpenOptions;
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(target_os = "windows")]
@@ -52,14 +52,14 @@ fn main() {
         match parse_args(line) {
             Ok(res) => {
                 let args = res.0;
-                let _ = res.1;
+                let re_list = res.1;
                 if args.is_empty() {
                     continue;
                 }
                 if map.contains_key(&args[0]) {
                     let handler = map.get(&args[0]).unwrap();
-                    let val = handler(&args[1..]).unwrap();
-                    writer.write_fmt(format_args!("{}", val)).unwrap();
+                    let val = handler(&args[1..]);
+                    out_put(val,&mut writer,&re_list);
                 } else {
                     writer
                         .write_fmt(format_args!("{}: command not found\n", args[0]))
@@ -114,7 +114,7 @@ fn handle_type(args: &[String]) -> Result<String, String> {
     Ok(res)
 }
 
-fn handle_pwd(args: &[String]) -> Result<String, String> {
+fn handle_pwd(_args: &[String]) -> Result<String, String> {
     match env::current_dir() {
         Ok(dir) => Ok(dir.into_os_string().into_string().unwrap() + "\n"),
         Err(err) => Err(err.to_string() + "\n"),
@@ -138,13 +138,13 @@ fn handle_cd(args: &[String]) -> Result<String, String> {
         let path = Path::new(&path_str);
         return match env::set_current_dir(path) {
             Ok(_) => Ok("".to_string()),
-            Err(err) => Err(err.to_string()),
+            Err(err) => Err(err.to_string()+"\n"),
         };
     }
     let path = Path::new(args[0].as_str());
     match env::set_current_dir(path) {
         Ok(_) => Ok("".to_string()),
-        Err(err) => Err(err.to_string()),
+        Err(err) => Err(err.to_string() + "\n"),
     }
 }
 
@@ -190,11 +190,11 @@ fn parse_args(args: String) -> Result<(Vec<String>, Vec<RedirectOpt>), String> {
                 '\\' => escape_next = true,
                 ' ' => {
                     if item.len() != 0 {
-                        if let Some(mut reOpt) = opt {
-                            reOpt.path = item.clone();
+                        if let Some(mut re_opt) = opt {
+                            re_opt.path = item.clone();
                             item.clear();
                             opt = None;
-                            opts.push(reOpt);
+                            opts.push(re_opt);
                             continue;
                         }
                         opt = is_redirect(item.as_str());
@@ -276,4 +276,21 @@ fn is_executable(flag: &str) -> (bool, String) {
         }
     }
     (false, "".to_string())
+}
+
+fn out_put(val:Result<String,String>, out: &mut BufWriter<std::io::Stdout>, re_list: &[RedirectOpt]) {
+    if re_list.len() == 0 {
+        let out_val = val.unwrap_or_else(|err| err);
+        out.write_fmt(format_args!("{}",out_val)).unwrap();
+        out.flush().unwrap();
+        return;
+    }
+    for re in re_list {
+        //TODO
+    }
+}
+
+fn re_to_file(val: String, re_opt: &RedirectOpt) -> std::io::Result<()> {
+    let mut file = OpenOptions::new().append(re_opt.is_append).open(Path::new(&re_opt.path))?;
+    file.write_fmt(format_args!("{}",val))
 }
