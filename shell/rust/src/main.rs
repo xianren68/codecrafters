@@ -60,7 +60,12 @@ fn main() {
                     let handler = map.get(&args[0]).unwrap();
                     let val = handler(&args[1..]);
                     out_put(val,&mut writer,&re_list);
-                } else {
+                }else {
+                    let (is_exc, com_path) = is_executable(&args[0]);
+                    if is_exc {
+                        out_put(execution(&*com_path, &args[1..]), &mut writer, &re_list);
+                        continue;
+                    }
                     writer
                         .write_fmt(format_args!("{}: command not found\n", args[0]))
                         .unwrap();
@@ -278,19 +283,53 @@ fn is_executable(flag: &str) -> (bool, String) {
     (false, "".to_string())
 }
 
-fn out_put(val:Result<String,String>, out: &mut BufWriter<std::io::Stdout>, re_list: &[RedirectOpt]) {
+fn out_put(val:Result<String,String>, out: &mut BufWriter<io::Stdout>, re_list: &[RedirectOpt]) {
     if re_list.len() == 0 {
-        let out_val = val.unwrap_or_else(|err| err);
+        let out_val = &val.unwrap_or_else(|err| err);
         out.write_fmt(format_args!("{}",out_val)).unwrap();
         out.flush().unwrap();
         return;
     }
+    let flag = match &val {
+        Ok(_) => true,
+        Err(_) => false,
+    };
+    let out_val = &val.unwrap_or_else(|err| err);
+    let mut flag_out = false;
     for re in re_list {
-        //TODO
+         if !(re.is_stderr && flag) {
+             flag_out = true;
+             re_to_file(out_val,re).unwrap_or_else(|err| {
+                 out.write_fmt(format_args!("{}\n",err)).unwrap();
+             })
+         }else {
+             re_to_file("",re).unwrap_or_else(|err| {
+                 out.write_fmt(format_args!("{}\n",err)).unwrap();
+             })
+         }
     }
+    // 没有对应的重定向
+    if !flag_out {
+        out.write_fmt(format_args!("{}",out_val)).unwrap();
+    }
+    out.flush().unwrap();
+}
+// 重定向到文件
+fn re_to_file(val: &str, re_opt: &RedirectOpt) -> io::Result<()> {
+    let mut file = OpenOptions::new().write(true).create(true).append(re_opt.is_append).open(Path::new(&re_opt.path))?;
+    file.write_fmt(format_args!("{}",val))
 }
 
-fn re_to_file(val: String, re_opt: &RedirectOpt) -> std::io::Result<()> {
-    let mut file = OpenOptions::new().append(re_opt.is_append).open(Path::new(&re_opt.path))?;
-    file.write_fmt(format_args!("{}",val))
+fn execution(com_path: &str, args: &[String]) -> Result<String, String> {
+    match process::Command::new(com_path).args(args).output() {
+        Err(_) => Err(format!("failed to execute: {}", com_path)),
+        Ok(out)=> {
+            let std = std::str::from_utf8(&out.stdout).unwrap();
+            let err = std::str::from_utf8(&out.stderr).unwrap();
+            if !err.is_empty() {
+                return Err(format!("{}\n",err));
+            }
+            Ok(std.parse().unwrap())
+        }
+    }
 }
