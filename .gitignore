@@ -39,7 +39,7 @@ zig-cache/
 *.vscode/
 .idea/
 *.iml
-
+.zig-cache/
 # IDE/编辑器相关
 *.code-workspace
 *.swp
