@@ -10,8 +10,8 @@ const redirectOpt = struct {
     isStderr: bool,
     path: []u8,
 };
-// const SPLIT = comptime if (std.builtin.os.tag == .linux) ":" else ";";
-// const SUFFIX = comptime if (std.builtin.os.tag == .linux) ".exe" else "";
+const SPLIT = if (builtin.os.tag == .linux) ":" else ";";
+const SUFFIX = if (builtin.os.tag == .windows) ".exe" else "";
 const HOME_ENV = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 pub fn main() !void {
     handleMap = hashMap.init(std.heap.page_allocator);
@@ -23,17 +23,19 @@ pub fn main() !void {
     try handleMap.put("cd", handle_cd);
     var writer = std.io.getStdOut().writer();
     var reader = std.io.getStdIn().reader();
+    var buffer: [1024]u8 = undefined;
     while (true) {
         try writer.print("$ ", .{});
-        var buffer: [1024]u8 = undefined;
         const input = try reader.readUntilDelimiter(&buffer, '\n');
         if (input.len == 0) {
             continue;
         }
-        if (parse_args(input[0 .. input.len - 1])) |result| {
+        if (parse_args(input[0 .. input.len - 1])) |resu| {
+            var result = resu;
             const args = result.args;
             _ = result.reList;
             if (args.len == 0) {
+                Allocator.free(input);
                 continue;
             }
             const cmd = args[0];
@@ -43,9 +45,9 @@ pub fn main() !void {
             } else {
                 try writer.print("{s}\n", .{input});
             }
+            result.deinit();
         } else |err| {
             try writer.print("error: {any}\n", .{err});
-            continue;
         }
     }
 }
@@ -82,6 +84,11 @@ fn handle_type(args: [][]u8) ![]u8 {
         if (handleMap.get(arg)) |_| {
             try res.appendSlice(arg);
             try res.appendSlice(" is a shell builtin\n");
+        } else if (is_executable(arg)) |path| {
+            try res.appendSlice(arg);
+            try res.appendSlice(" is ");
+            try res.appendSlice(path);
+            try res.appendSlice("\n");
         } else {
             try res.appendSlice(arg);
             try res.appendSlice(" not found\n");
@@ -123,6 +130,16 @@ fn handle_cd(args: [][]u8) ![]u8 {
 const res_type = struct {
     args: [][]u8,
     reList: []redirectOpt,
+    fn deinit(self: *res_type) void {
+        for (self.reList) |re| {
+            Allocator.free(re.path);
+        }
+        for (self.args) |arg| {
+            Allocator.free(arg);
+        }
+        Allocator.free(self.args);
+        Allocator.free(self.reList);
+    }
 };
 fn parse_args(args: []u8) !res_type {
     var result = try std.ArrayList([]u8).initCapacity(Allocator, 200);
@@ -215,4 +232,29 @@ fn is_redirect(args: []u8) ?redirectOpt {
     } else {
         return null;
     }
+}
+
+fn is_executable(path: []u8) ?[]u8 {
+    const file_name = std.mem.concat(Allocator, u8, &[_][]const u8{ path, SUFFIX }) catch return null;
+    const path_env_map = std.process.getEnvMap(Allocator) catch return null;
+    const path_env = path_env_map.get("PATH").?;
+    var paths = std.mem.splitAny(u8, path_env, SPLIT);
+    while (paths.next()) |p| {
+        const com_path = std.fs.path.join(Allocator, &[_][]const u8{ p, file_name }) catch continue;
+        const fs = std.fs.cwd().openFile(com_path, .{}) catch {
+            Allocator.free(com_path);
+            continue;
+        };
+        if (builtin.os.tag == .windows) {
+            fs.close();
+            return com_path;
+        }
+        if (fs.mode() & 0o111 == 0) {
+            Allocator.free(com_path);
+            continue;
+        }
+        fs.close();
+        return com_path;
+    }
+    return null;
 }
