@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 const Allocator = std.heap.page_allocator;
 const handler = fn ([][]u8) anyerror![]u8;
@@ -11,12 +12,15 @@ const redirectOpt = struct {
 };
 // const SPLIT = comptime if (std.builtin.os.tag == .linux) ":" else ";";
 // const SUFFIX = comptime if (std.builtin.os.tag == .linux) ".exe" else "";
+const HOME_ENV = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 pub fn main() !void {
     handleMap = hashMap.init(std.heap.page_allocator);
     defer handleMap.deinit();
     try handleMap.put("exit", handle_exit);
     try handleMap.put("echo", handle_echo);
     try handleMap.put("type", handle_type);
+    try handleMap.put("pwd", handle_pwd);
+    try handleMap.put("cd", handle_cd);
     var writer = std.io.getStdOut().writer();
     var reader = std.io.getStdIn().reader();
     while (true) {
@@ -49,9 +53,6 @@ pub fn main() !void {
 fn handle_exit(args: [][]u8) ![]u8 {
     if (args.len == 0) {
         std.process.exit(0);
-    }
-    if (args.len >= 2) {
-        return error.TooFewArguments;
     }
     const status = std.fmt.parseInt(u8, args[0], 10) catch @as(u8, 0);
     std.process.exit(status);
@@ -88,6 +89,37 @@ fn handle_type(args: [][]u8) ![]u8 {
     }
     return try res.toOwnedSlice();
 }
+
+fn handle_pwd(args: [][]u8) ![]u8 {
+    _ = args;
+    var cur_dir = std.fs.cwd();
+    defer cur_dir.close();
+    const path = try cur_dir.realpathAlloc(Allocator, ".");
+    defer Allocator.free(path);
+    var res = try Allocator.alloc(u8, path.len + 1);
+    std.mem.copyForwards(u8, res, path);
+    res[path.len] = '\n';
+    return res;
+}
+
+fn handle_cd(args: [][]u8) ![]u8 {
+    if (args.len == 0) {
+        return "";
+    }
+    if (args.len > 1) {
+        return error.TooManyArgs;
+    }
+    var path: []const u8 = args[0];
+    if (std.mem.eql(u8, path, "~")) {
+        const home_env = try std.process.getEnvMap(Allocator);
+        path = home_env.get(HOME_ENV).?;
+    }
+    var dir = try std.fs.cwd().openDir(path, .{});
+    defer dir.close();
+    try dir.setAsCwd();
+    return "";
+}
+
 const res_type = struct {
     args: [][]u8,
     reList: []redirectOpt,
