@@ -297,7 +297,7 @@ fn out_put(val:Result<String,String>, out: &mut BufWriter<io::Stdout>, re_list: 
     let out_val = &val.unwrap_or_else(|err| err);
     let mut flag_out = false;
     for re in re_list {
-         if !(re.is_stderr && flag) {
+         if re.is_stderr != flag {
              flag_out = true;
              re_to_file(out_val,re).unwrap_or_else(|err| {
                  out.write_fmt(format_args!("{}\n",err)).unwrap();

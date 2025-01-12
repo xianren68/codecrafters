@@ -14,7 +14,7 @@ const SPLIT = if (builtin.os.tag == .linux) ":" else ";";
 const SUFFIX = if (builtin.os.tag == .windows) ".exe" else "";
 const HOME_ENV = if (builtin.os.tag == .windows) "USERPROFILE" else "HOME";
 pub fn main() !void {
-    handleMap = hashMap.init(std.heap.page_allocator);
+    handleMap = hashMap.init(Allocator);
     defer handleMap.deinit();
     try handleMap.put("exit", handle_exit);
     try handleMap.put("echo", handle_echo);
@@ -33,17 +33,19 @@ pub fn main() !void {
         if (parse_args(input[0 .. input.len - 1])) |resu| {
             var result = resu;
             const args = result.args;
-            _ = result.reList;
+            const re_opts = result.reList;
             if (args.len == 0) {
-                Allocator.free(input);
                 continue;
             }
             const cmd = args[0];
             if (handleMap.get(cmd)) |handlerFn| {
-                const res = try handlerFn(args[1..]);
-                try writer.print("{s}", .{res});
+                out_put(handlerFn(args[1..]), re_opts);
             } else {
-                try writer.print("{s}\n", .{input});
+                if (is_executable(args[0])) |com_path| {
+                    out_put(execution(com_path, args[1..]), re_opts);
+                } else {
+                    try writer.print("{s} command not found\n", .{input});
+                }
             }
             result.deinit();
         } else |err| {
@@ -151,6 +153,7 @@ fn parse_args(args: []u8) !res_type {
     var escape_next = false;
     var reOpt: ?redirectOpt = null;
     var reList = try std.ArrayList(redirectOpt).initCapacity(Allocator, 20);
+    defer reList.deinit();
     for (args) |c| {
         if (in_single_quote) {
             if (c == '\'') {
@@ -257,4 +260,95 @@ fn is_executable(path: []u8) ?[]u8 {
         return com_path;
     }
     return null;
+}
+
+fn out_put(val: anyerror![]u8, re_list: []redirectOpt) void {
+    var writer = std.io.getStdOut().writer();
+    var std_val: []const u8 = undefined;
+    var flag: bool = undefined;
+    if (val) |v| {
+        std_val = v;
+        flag = true;
+    } else |err| {
+        std_val = @errorName(err);
+        flag = false;
+    }
+    if (re_list.len == 0) {
+        writer.print("{s}", .{std_val}) catch unreachable;
+        return;
+    }
+    var out_flag = false;
+    for (re_list) |re| {
+        if (re.isStderr != flag) {
+            out_flag = true;
+            re_to_file(re, std_val) catch |err| {
+                writer.print("error: {any}\n", .{err}) catch unreachable;
+            };
+        } else {
+            re_to_file(re, "") catch |err| {
+                writer.print("error: {any}\n", .{err}) catch unreachable;
+            };
+        }
+    }
+    if (!out_flag) {
+        writer.print("{s}", .{std_val}) catch unreachable;
+    }
+}
+
+fn re_to_file(re: redirectOpt, val: []const u8) !void {
+    var file: ?std.fs.File = null;
+    if (std.fs.cwd().openFile(re.path, .{ .mode = .read_write })) |f| {
+        file = f;
+    } else |err| {
+        if (err != error.FileNotFound) {
+            return err;
+        }
+        file = try std.fs.cwd().createFile(re.path, .{ .read = true });
+    }
+    var fs = file.?;
+    defer fs.close();
+    if (re.isAppend) {
+        try fs.seekFromEnd(0);
+    }
+    try fs.writeAll(val);
+}
+
+fn execution(path: []u8, args: [][]u8) ![]u8 {
+    var exec_args = std.ArrayList([]u8).init(Allocator);
+    try exec_args.append(path);
+    try exec_args.appendSlice(args);
+    defer exec_args.deinit();
+    var child_process = std.process.Child.init(exec_args.items, Allocator);
+    child_process.stderr_behavior = .Pipe;
+    child_process.stdout_behavior = .Pipe;
+    try child_process.spawn();
+    const std_out: []u8 = forward(child_process.stdout) catch "";
+    const std_err: []u8 = forward(child_process.stderr) catch "";
+    _ = try child_process.wait();
+    if (std_err.len == 0) {
+        return std_out;
+    }
+    return error.Error;
+}
+
+pub fn forward(file: ?std.fs.File) ![]u8 {
+    var source: std.fs.File = undefined;
+    if (file) |f| {
+        source = f;
+    } else {
+        return &[_]u8{};
+    }
+    var buffer: [1024]u8 = undefined;
+    var target = std.ArrayList(u8).init(Allocator);
+    var writer = target.writer();
+    while (true) {
+        const bytes_read = try source.read(&buffer);
+        if (bytes_read > 0) {
+            try writer.writeAll(buffer[0..bytes_read]);
+        } else {
+            break;
+        }
+    }
+    defer target.deinit();
+    return try target.toOwnedSlice();
 }
