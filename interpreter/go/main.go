@@ -27,6 +27,19 @@ var errorMap = map[byte]struct{}{
 	'%': {},
 }
 
+var nextEqul = map[byte]string{
+	'=': "EQUAL",
+	'>': "GREATER",
+	'<': "LESS",
+	'!': "BANG",
+}
+
+var igonreMap = map[byte]struct{}{
+	' ':  {},
+	'\t': {},
+	'\n': {},
+}
+
 func main() {
 	args := os.Args
 	if len(args) < 3 {
@@ -55,19 +68,30 @@ func handler(content []byte) {
 	token := make([]byte, 0, 20)
 	line := 1
 	expectFlag := false
+	isComment := false
 	for i := 0; i < len(content); i++ {
 		val := content[i]
-		if v, ok := tokenMap[val]; ok {
+		if _, ok := igonreMap[val]; ok {
+			if val == '\n' {
+				line++
+				isComment = false
+			}
+		} else if isComment {
+			continue
+		} else if val == '/' && i+1 < len(content) && content[i+1] == '/' {
+			isComment = true
+			i++
+		} else if v, ok := tokenMap[val]; ok {
 			str := "null"
 			if len(token) > 0 {
 				str = string(token)
 			}
-			if v == "EQUAL" && i+1 < len(content) && content[i+1] == '=' {
-				v = "EQUAL_EQUAL"
+			if v1, ok := nextEqul[val]; ok && i+1 < len(content) && content[i+1] == '=' {
+				fmt.Printf("%s_%s %c%c %s\n", v1, "EQUAL", val, '=', str)
 				i++
-				fmt.Printf("%s %c%c %s\n", v, val, val, str)
 			} else {
 				fmt.Printf("%s %c %s\n", v, val, str)
+
 			}
 			token = token[:0]
 		} else if _, ok := errorMap[val]; ok {
@@ -75,9 +99,6 @@ func handler(content []byte) {
 			expectFlag = true
 			token = token[:0]
 		} else {
-			if val == '\n' {
-				line++
-			}
 			token = append(token, val)
 		}
 	}
