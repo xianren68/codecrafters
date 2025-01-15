@@ -37,7 +37,6 @@ var nextEqul = map[byte]string{
 var igonreMap = map[byte]struct{}{
 	' ':  {},
 	'\t': {},
-	'\n': {},
 }
 
 func main() {
@@ -69,14 +68,26 @@ func handler(content []byte) {
 	line := 1
 	expectFlag := false
 	isComment := false
+	inSignal := false
 	for i := 0; i < len(content); i++ {
 		val := content[i]
-		if _, ok := igonreMap[val]; ok {
-			if val == '\n' {
-				line++
-				isComment = false
+		if val == '\n' {
+			if inSignal {
+				expectFlag = true
+				fmt.Fprintf(os.Stderr, "[line %d] Error: Unterminated string.\n", line)
 			}
-		} else if isComment {
+			line++
+			isComment = false
+			token = token[:0]
+		} else if inSignal {
+			if val == '"' {
+				inSignal = false
+				fmt.Printf("STRING \"%s\" %s\n", string(token), string(token))
+				token = token[:0]
+			} else {
+				token = append(token, val)
+			}
+		} else if _, ok := igonreMap[val]; ok || isComment {
 			continue
 		} else if val == '/' && i+1 < len(content) && content[i+1] == '/' {
 			isComment = true
@@ -99,8 +110,16 @@ func handler(content []byte) {
 			expectFlag = true
 			token = token[:0]
 		} else {
+			if val == '"' {
+				inSignal = true
+				continue
+			}
 			token = append(token, val)
 		}
+	}
+	if inSignal {
+		expectFlag = true
+		fmt.Fprintf(os.Stderr, "[line %d] Error: Unterminated string.\n", line)
 	}
 	fmt.Println("EOF  null")
 	if expectFlag {
