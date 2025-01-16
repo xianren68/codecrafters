@@ -69,6 +69,8 @@ func handler(content []byte) {
 	expectFlag := false
 	isComment := false
 	inSignal := false
+	inNumber := false
+	isDot := false
 	for i := 0; i < len(content); i++ {
 		val := content[i]
 		if val == '\n' {
@@ -86,6 +88,36 @@ func handler(content []byte) {
 				token = token[:0]
 			} else {
 				token = append(token, val)
+			}
+		} else if inNumber {
+			if (val >= '0' && val <= '9') || val == '.' {
+				token = append(token, val)
+				if val == '.' {
+					isDot = true
+				}
+			} else {
+				str := string(token)
+				if !isDot {
+					str += ".0"
+				} else {
+					j := len(str) - 1
+					for ; str[j] != '.'; j-- {
+						if str[j] == 0 {
+							continue
+						} else {
+							break
+						}
+					}
+					str = str[:j+1]
+					if str[j] == '.' {
+						str += "0"
+					}
+					isDot = false
+				}
+				fmt.Printf("NUMBER %s %s\n", string(token), str)
+				inNumber = false
+				token = token[:0]
+				i--
 			}
 		} else if _, ok := igonreMap[val]; ok || isComment {
 			continue
@@ -113,6 +145,11 @@ func handler(content []byte) {
 			if val == '"' {
 				inSignal = true
 				continue
+			} else if val >= '0' && val <= '9' {
+				inNumber = true
+				token = token[:0]
+				token = append(token, val)
+				continue
 			}
 			token = append(token, val)
 		}
@@ -120,6 +157,27 @@ func handler(content []byte) {
 	if inSignal {
 		expectFlag = true
 		fmt.Fprintf(os.Stderr, "[line %d] Error: Unterminated string.\n", line)
+	}
+	if inNumber {
+		str := string(token)
+		if !isDot {
+			str += ".0"
+		} else {
+			j := len(str) - 1
+			for ; str[j] != '.'; j-- {
+				if str[j] == '0' {
+					continue
+				} else {
+					break
+				}
+			}
+			str = str[:j+1]
+			if str[j] == '.' {
+				str += "0"
+			}
+			isDot = false
+		}
+		fmt.Printf("NUMBER %s %s\n", string(token), str)
 	}
 	fmt.Println("EOF  null")
 	if expectFlag {
