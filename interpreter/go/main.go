@@ -18,6 +18,9 @@ var tokenMap = map[byte]string{
 	'/': "SLASH",
 	';': "SEMICOLON",
 	'=': "EQUAL",
+	'>': "GREATER",
+	'<': "LESS",
+	'!': "BANG",
 }
 
 var errorMap = map[byte]struct{}{
@@ -27,74 +30,79 @@ var errorMap = map[byte]struct{}{
 	'%': {},
 }
 
-var nextEqul = map[byte]string{
+var equlPre = map[byte]string{
 	'=': "EQUAL",
 	'>': "GREATER",
 	'<': "LESS",
 	'!': "BANG",
 }
 
-var igonreMap = map[byte]struct{}{
+var ignoreMap = map[byte]struct{}{
 	' ':  {},
 	'\t': {},
 }
 
 func main() {
-	args := os.Args
-	if len(args) < 3 {
-		fmt.Fprintf(os.Stderr, "too few arguments")
+	if len(os.Args) < 3 {
+		_, _ = fmt.Fprintln(os.Stderr, "Usage: ./your_program.sh tokenize <filename>")
 		os.Exit(1)
 	}
-	command := args[1]
+
+	command := os.Args[1]
+
 	if command != "tokenize" {
-		fmt.Printf("unknow command %s\n", command)
+		_, _ = fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		os.Exit(1)
 	}
-	fileName := args[2]
-	file, err := os.ReadFile(fileName)
+	filename := os.Args[2]
+	fileContents, err := os.ReadFile(filename)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "open file error %v", err)
+		_, _ = fmt.Fprintf(os.Stderr, "Error reading file: %v\n", err)
 		os.Exit(1)
 	}
-	if len(file) > 0 {
-		handler(file)
+	if len(fileContents) > 0 {
+		handler(fileContents)
 	} else {
-		fmt.Println("EOF null")
+		fmt.Println("EOF  null") // Placeholder, remove this line when implementing the scanner
 	}
 }
-
 func handler(content []byte) {
 	token := make([]byte, 0, 20)
-	line := 1
-	expectFlag := false
-	isComment := false
-	inSignal := false
+	inIdentity := false
 	inNumber := false
+	inComment := false
+	inSingleLine := false
 	isDot := false
+	expectFlag := false
+	line := 1
 	for i := 0; i < len(content); i++ {
 		val := content[i]
-		if val == '\n' {
-			if inSignal {
-				expectFlag = true
-				fmt.Fprintf(os.Stderr, "[line %d] Error: Unterminated string.\n", line)
+		if inComment {
+			if val == '\n' {
+				inComment = false
+				token = token[:0]
+				line++
 			}
-			line++
-			isComment = false
-			token = token[:0]
-		} else if inSignal {
+		} else if inSingleLine {
 			if val == '"' {
-				inSignal = false
+				inSingleLine = false
 				fmt.Printf("STRING \"%s\" %s\n", string(token), string(token))
 				token = token[:0]
+			} else if val == '\n' {
+				inSingleLine = false
+				expectFlag = true
+				_, _ = fmt.Fprintf(os.Stderr, "[line %d] Error: Unterminated string.\n", line)
+				token = token[:0]
+				line++
 			} else {
 				token = append(token, val)
 			}
 		} else if inNumber {
-			if (val >= '0' && val <= '9') || val == '.' {
-				token = append(token, val)
+			if (val >= '0' && val <= '9') || (val == '.') {
 				if val == '.' {
 					isDot = true
 				}
+				token = append(token, val)
 			} else {
 				str := string(token)
 				if !isDot {
@@ -102,7 +110,7 @@ func handler(content []byte) {
 				} else {
 					j := len(str) - 1
 					for ; str[j] != '.'; j-- {
-						if str[j] == 0 {
+						if str[j] == '0' {
 							continue
 						} else {
 							break
@@ -119,42 +127,59 @@ func handler(content []byte) {
 				token = token[:0]
 				i--
 			}
-		} else if _, ok := igonreMap[val]; ok || isComment {
+		} else if inIdentity {
+			if _, ok := ignoreMap[val]; ok || val == '\n' {
+				inIdentity = false
+				fmt.Printf("IDENTIFIER %s %s\n", string(token), "null")
+				token = token[:0]
+				if val == '\n' {
+					line++
+				}
+			} else if _, ok := tokenMap[val]; ok {
+				inIdentity = false
+				fmt.Printf("IDENTIFIER %s %s\n", string(token), "null")
+				token = token[:0]
+				i--
+			} else {
+				token = append(token, val)
+			}
+		} else if _, ok := ignoreMap[val]; ok {
 			continue
-		} else if val == '/' && i+1 < len(content) && content[i+1] == '/' {
-			isComment = true
-			i++
+		} else if _, ok := errorMap[val]; ok {
+			expectFlag = true
+			_, _ = fmt.Fprintf(os.Stderr, "[line %d] Error: Unexpected character: %c\n", line, val)
 		} else if v, ok := tokenMap[val]; ok {
 			str := "null"
 			if len(token) > 0 {
 				str = string(token)
 			}
-			if v1, ok := nextEqul[val]; ok && i+1 < len(content) && content[i+1] == '=' {
+			if v1, ok := equlPre[val]; ok && i+1 < len(content) && content[i+1] == '=' {
 				fmt.Printf("%s_%s %c%c %s\n", v1, "EQUAL", val, '=', str)
+				i++
+			} else if val == '/' && i+1 < len(content) && content[i+1] == '/' {
+				inComment = true
 				i++
 			} else {
 				fmt.Printf("%s %c %s\n", v, val, str)
-
 			}
-			token = token[:0]
-		} else if _, ok := errorMap[val]; ok {
-			fmt.Fprintf(os.Stderr, "[line %d] Error: Unexpected character: %c\n", line, val)
-			expectFlag = true
-			token = token[:0]
 		} else {
 			if val == '"' {
-				inSignal = true
-				continue
+				inSingleLine = true
 			} else if val >= '0' && val <= '9' {
 				inNumber = true
-				token = token[:0]
 				token = append(token, val)
-				continue
+			} else if val >= 'a' && val <= 'z' || val >= 'A' && val <= 'Z' || val == '_' {
+				inIdentity = true
+				token = append(token, val)
+			} else if val == '\n' {
+				line++
+				token = token[:0]
+			} else {
+				token = append(token, val)
 			}
-			token = append(token, val)
 		}
 	}
-	if inSignal {
+	if inSingleLine {
 		expectFlag = true
 		fmt.Fprintf(os.Stderr, "[line %d] Error: Unterminated string.\n", line)
 	}
@@ -178,6 +203,9 @@ func handler(content []byte) {
 			isDot = false
 		}
 		fmt.Printf("NUMBER %s %s\n", string(token), str)
+	}
+	if inIdentity {
+		fmt.Printf("IDENTIFIER %s %s\n", string(token), "null")
 	}
 	fmt.Println("EOF  null")
 	if expectFlag {
