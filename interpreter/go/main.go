@@ -42,6 +42,25 @@ var ignoreMap = map[byte]struct{}{
 	'\t': {},
 }
 
+var keywords = map[string]string{
+	"and":    "AND",
+	"class":  "CLASS",
+	"else":   "ELSE",
+	"false":  "FALSE",
+	"for":    "FOR",
+	"fun":    "FUN",
+	"if":     "IF",
+	"nil":    "NIL",
+	"or":     "OR",
+	"print":  "PRINT",
+	"return": "RETURN",
+	"super":  "SUPER",
+	"this":   "THIS",
+	"true":   "TRUE",
+	"var":    "VAR",
+	"while":  "WHILE",
+}
+
 func main() {
 	if len(os.Args) < 3 {
 		_, _ = fmt.Fprintln(os.Stderr, "Usage: ./your_program.sh tokenize <filename>")
@@ -130,11 +149,13 @@ func handler(content []byte) {
 		} else if inIdentity {
 			if _, ok := ignoreMap[val]; ok || val == '\n' {
 				inIdentity = false
-				fmt.Printf("IDENTIFIER %s %s\n", string(token), "null")
-				token = token[:0]
-				if val == '\n' {
-					line++
+				if word, ok := keywords[string(token)]; ok {
+					fmt.Printf("%s %s null\n", word, string(token))
+				} else {
+					fmt.Printf("IDENTIFIER %s null\n", string(token))
 				}
+				token = token[:0]
+				i--
 			} else if _, ok := tokenMap[val]; ok {
 				inIdentity = false
 				fmt.Printf("IDENTIFIER %s %s\n", string(token), "null")
@@ -149,18 +170,14 @@ func handler(content []byte) {
 			expectFlag = true
 			_, _ = fmt.Fprintf(os.Stderr, "[line %d] Error: Unexpected character: %c\n", line, val)
 		} else if v, ok := tokenMap[val]; ok {
-			str := "null"
-			if len(token) > 0 {
-				str = string(token)
-			}
 			if v1, ok := equlPre[val]; ok && i+1 < len(content) && content[i+1] == '=' {
-				fmt.Printf("%s_%s %c%c %s\n", v1, "EQUAL", val, '=', str)
+				fmt.Printf("%s_%s %c%c null\n", v1, "EQUAL", val, '=')
 				i++
 			} else if val == '/' && i+1 < len(content) && content[i+1] == '/' {
 				inComment = true
 				i++
 			} else {
-				fmt.Printf("%s %c %s\n", v, val, str)
+				fmt.Printf("%s %c null\n", v, val)
 			}
 		} else {
 			if val == '"' {
@@ -205,7 +222,11 @@ func handler(content []byte) {
 		fmt.Printf("NUMBER %s %s\n", string(token), str)
 	}
 	if inIdentity {
-		fmt.Printf("IDENTIFIER %s %s\n", string(token), "null")
+		if word, ok := keywords[string(token)]; ok {
+			fmt.Printf("%s %s null\n", word, string(token))
+		} else {
+			fmt.Printf("IDENTIFIER %s null\n", string(token))
+		}
 	}
 	fmt.Println("EOF  null")
 	if expectFlag {
