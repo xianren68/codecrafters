@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -31,7 +32,6 @@ func main() {
 	handlerMap["type"] = handleType
 	handlerMap["cd"] = handleCd
 	handlerMap["pwd"] = handlePwd
-	scanner := bufio.NewScanner(os.Stdin)
 	var err error
 	var args []string
 	var reList []*DirectOpt
@@ -39,12 +39,11 @@ func main() {
 	for {
 		_, _ = out.WriteString("$ ")
 		out.Flush()
-		if !scanner.Scan() {
-			return
-		}
-		line := scanner.Text()
-		args, reList, err = ParseArgs(line)
+		args, reList, err = ParseArgs()
 		if err != nil {
+			if err == io.EOF {
+				break
+			}
 			out.WriteString(err.Error() + "\n")
 			out.Flush()
 			continue
@@ -130,11 +129,25 @@ func handleCd(args []string) (string, error) {
 		args[0] = os.Getenv(homeVar)
 	}
 	err := os.Chdir(args[0])
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("cd: " + args[0] + ": No such file or directory")
+	}
 	return "", err
+}
+func autoComplete(args string) string {
+	if len(args) < 3 {
+		return ""
+	}
+	for key := range handlerMap {
+		if strings.HasPrefix(key, args) {
+			return key
+		}
+	}
+	return ""
 }
 
 // ParseArgs 解析参数
-func ParseArgs(args string) ([]string, []*DirectOpt, error) {
+func ParseArgs() ([]string, []*DirectOpt, error) {
 	// 是否单引号内
 	inSingalQuote := false
 	// 是否双引号内
@@ -146,10 +159,17 @@ func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 	// 是否重定向
 	var Redirect *DirectOpt = nil
 	var optList []*DirectOpt = nil
+	var reader = bufio.NewReader(os.Stdin)
 	// 解析结果
 	res := make([]string, 0, 20)
-	for i := 0; i < len(args); i++ {
-		val := args[i]
+	for {
+		val, err := reader.ReadByte()
+		if err != nil {
+			return res, optList, err
+		}
+		if val == '\n' {
+			break
+		}
 		if inDoubleQuote {
 			if escapeNext {
 				escapeNext = false
@@ -200,6 +220,11 @@ func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 					}
 					item = make([]byte, 0, 1024)
 				}
+			case '\t':
+				str := autoComplete(string(item))
+				fmt.Print(str + " ")
+				res = append(res, str)
+				item = make([]byte, 0, 1024)
 			default:
 				item = append(item, val)
 			}
@@ -212,6 +237,9 @@ func ParseArgs(args string) ([]string, []*DirectOpt, error) {
 		return nil, nil, errors.New("syntax error near unexpected token `newline'")
 	}
 	if len(item) != 0 {
+		if osSystem == "Windows_NT" {
+			item = item[:len(item)-1]
+		}
 		if Redirect != nil {
 			optList = append(optList, Redirect)
 			Redirect.path = string(item)
@@ -243,28 +271,35 @@ func outPut(val string, errVal error, out *bufio.Writer, reList []*DirectOpt) {
 	if len(reList) == 0 {
 		if errVal != nil {
 			out.WriteString(errVal.Error())
-			out.WriteByte('\n')
 		} else {
 			out.WriteString(val)
 		}
 		out.Flush()
 		return
 	}
-	if errVal == nil {
-		errVal = errors.New("")
+	var flag = true
+	if errVal != nil {
+		flag = false
+		val = errVal.Error()
 	}
+	var flag_out = false
 	var err error
 	for _, opt := range reList {
-		if opt.isStdErr {
-			err = reToFile(errVal.Error(), opt.path, opt.isAppend)
-		} else {
+		if opt.isStdErr != flag {
+			flag_out = true
 			err = reToFile(val, opt.path, opt.isAppend)
+		} else {
+			err = reToFile("", opt.path, opt.isAppend)
 		}
 		if err != nil {
 			out.WriteString(err.Error())
 			out.WriteByte('\n')
 			out.Flush()
 		}
+	}
+	if !flag_out {
+		out.WriteString(val)
+		out.Flush()
 	}
 }
 
@@ -317,13 +352,17 @@ func isExecutable(command string) (bool, string) {
 
 // 执行可执行文件
 func execution(command string, args []string) (string, error) {
+	commands := strings.Split(command, "/")
+	if len(commands) > 1 {
+		command = commands[len(commands)-1]
+	}
 	cmd := exec.Command(command, args...)
 	var stdStr, errStr bytes.Buffer
 	cmd.Stdout = &stdStr
 	cmd.Stderr = &errStr
 	err := cmd.Run()
 	if err != nil {
-		return "", err
+		return stdStr.String(), errors.New(errStr.String())
 	}
 	return stdStr.String(), nil
 }
