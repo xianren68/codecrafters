@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // DirectOpt 重定向配置
@@ -26,13 +28,19 @@ type Handler = func([]string) (string, error)
 var handlerMap map[string]Handler
 
 func main() {
+	// 保存当前终端状态
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		fmt.Printf("Failed to make raw: %v\n", err)
+		return
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
 	handlerMap = make(map[string]Handler, 10)
 	handlerMap["exit"] = handleExit
 	handlerMap["echo"] = handleEcho
 	handlerMap["type"] = handleType
 	handlerMap["cd"] = handleCd
 	handlerMap["pwd"] = handlePwd
-	var err error
 	var args []string
 	var reList []*DirectOpt
 	out := bufio.NewWriter(os.Stdout)
@@ -49,17 +57,23 @@ func main() {
 			continue
 		}
 		if len(args) == 0 {
-			outPut("", nil, out, reList)
+			outPut("", "", out, reList)
 			continue
 		}
 		command := args[0]
 		var str string
 		if handler, ok := handlerMap[command]; ok {
 			str, err = handler(args[1:])
-			outPut(str, err, out, reList)
+			if err == nil {
+				err = errors.New("")
+			}
+			outPut(str, err.Error(), out, reList)
 		} else if flag, fullPath := isExecutable(command); flag {
 			str, err = execution(fullPath, args[1:])
-			outPut(str, err, out, reList)
+			if err == nil {
+				err = errors.New("")
+			}
+			outPut(str, err.Error(), out, reList)
 		} else {
 			str = fmt.Sprintf("%s: command not found\n", command)
 			out.WriteString(str)
@@ -159,17 +173,23 @@ func ParseArgs() ([]string, []*DirectOpt, error) {
 	// 是否重定向
 	var Redirect *DirectOpt = nil
 	var optList []*DirectOpt = nil
-	var reader = bufio.NewReader(os.Stdin)
+	var reader = os.Stdin
+	var out = bufio.NewWriter(os.Stdout)
 	// 解析结果
 	res := make([]string, 0, 20)
+	buf := make([]byte, 1)
 	for {
-		val, err := reader.ReadByte()
+		_, err := reader.Read(buf)
 		if err != nil {
 			return res, optList, err
 		}
+		val := buf[0]
 		if val == '\n' {
+			os.Stdout.Write([]byte("\n")) // 手动换行
 			break
 		}
+		out.WriteByte(val)
+		out.Flush()
 		if inDoubleQuote {
 			if escapeNext {
 				escapeNext = false
@@ -267,29 +287,29 @@ func isRedirect(val string) *DirectOpt {
 }
 
 // 输出
-func outPut(val string, errVal error, out *bufio.Writer, reList []*DirectOpt) {
+func outPut(val string, errVal string, out *bufio.Writer, reList []*DirectOpt) {
+	if errVal != "" && errVal[len(errVal)-1] != '\n' {
+		errVal += "\n"
+	}
+	if val != "" && val[len(val)-1] != '\n' {
+		val += "\n"
+	}
 	if len(reList) == 0 {
-		if errVal != nil {
-			out.WriteString(errVal.Error())
-		} else {
-			out.WriteString(val)
-		}
+		out.WriteString(val)
+		out.WriteString(errVal)
 		out.Flush()
 		return
 	}
-	var flag = true
-	if errVal != nil {
-		flag = false
-		val = errVal.Error()
-	}
-	var flag_out = false
+	stdOutFlag := false
+	stdErrFlag := false
 	var err error
 	for _, opt := range reList {
-		if opt.isStdErr != flag {
-			flag_out = true
-			err = reToFile(val, opt.path, opt.isAppend)
+		if opt.isStdErr {
+			stdErrFlag = true
+			err = reToFile(errVal, opt.path, opt.isAppend)
 		} else {
-			err = reToFile("", opt.path, opt.isAppend)
+			stdOutFlag = true
+			err = reToFile(val, opt.path, opt.isAppend)
 		}
 		if err != nil {
 			out.WriteString(err.Error())
@@ -297,10 +317,13 @@ func outPut(val string, errVal error, out *bufio.Writer, reList []*DirectOpt) {
 			out.Flush()
 		}
 	}
-	if !flag_out {
+	if !stdOutFlag {
 		out.WriteString(val)
-		out.Flush()
 	}
+	if !stdErrFlag {
+		out.WriteString(errVal)
+	}
+	out.Flush()
 }
 
 // 重定向到文件
