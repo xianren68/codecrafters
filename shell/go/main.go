@@ -52,7 +52,7 @@ func main() {
 			if err == io.EOF {
 				break
 			}
-			out.WriteString(err.Error() + "\n")
+			out.WriteString(err.Error() + "\r\n")
 			out.Flush()
 			continue
 		}
@@ -75,7 +75,7 @@ func main() {
 			}
 			outPut(str, err.Error(), out, reList)
 		} else {
-			str = fmt.Sprintf("%s: command not found\n", command)
+			str = fmt.Sprintf("%s: command not found\r\n", command)
 			out.WriteString(str)
 			out.Flush()
 		}
@@ -99,7 +99,7 @@ func handleEcho(args []string) (string, error) {
 	if len(args) == 0 {
 		return "", nil
 	}
-	return strings.Join(args, " ") + "\n", nil
+	return strings.Join(args, " ") + "\r\n", nil
 }
 
 func handleType(args []string) (string, error) {
@@ -109,11 +109,11 @@ func handleType(args []string) (string, error) {
 	res := strings.Builder{}
 	for _, val := range args {
 		if _, ok := handlerMap[val]; ok {
-			res.WriteString(fmt.Sprintf("%s is a shell builtin\n", val))
+			res.WriteString(fmt.Sprintf("%s is a shell builtin\r\n", val))
 		} else if flag, cp := isExecutable(val); flag {
-			res.WriteString(fmt.Sprintf("%s is %s\n", val, cp))
+			res.WriteString(fmt.Sprintf("%s is %s\r\n", val, cp))
 		} else {
-			res.WriteString(fmt.Sprintf("%s: not found\n", val))
+			res.WriteString(fmt.Sprintf("%s: not found\r\n", val))
 		}
 	}
 	return res.String(), nil
@@ -123,9 +123,9 @@ func handlePwd(args []string) (string, error) {
 	_ = args
 	s, err := os.Getwd()
 	if err != nil {
-		err = errors.New(err.Error() + "\n")
+		err = errors.New(err.Error() + "\r\n")
 	}
-	return s + "\n", err
+	return s + "\r\n", err
 }
 
 func handleCd(args []string) (string, error) {
@@ -184,11 +184,23 @@ func ParseArgs() ([]string, []*DirectOpt, error) {
 			return res, optList, err
 		}
 		val := buf[0]
-		if val == '\n' {
-			os.Stdout.Write([]byte("\n")) // 手动换行
+		if val == '\r' {
+			fmt.Print("\n")
 			break
 		}
-		out.WriteByte(val)
+		if val == '\n' {
+			fmt.Print("\r\n")
+			break
+		}
+		if val == '\t' {
+			val := string(item)
+			str := autoComplete(val)
+			fmt.Print(str[len(val):] + " ") // 输出补全部分
+			res = append(res, str)
+			item = make([]byte, 0, 1024)
+			continue
+		}
+		out.WriteByte(val) // 输出到标准输出
 		out.Flush()
 		if inDoubleQuote {
 			if escapeNext {
@@ -240,11 +252,6 @@ func ParseArgs() ([]string, []*DirectOpt, error) {
 					}
 					item = make([]byte, 0, 1024)
 				}
-			case '\t':
-				str := autoComplete(string(item))
-				fmt.Print(str + " ")
-				res = append(res, str)
-				item = make([]byte, 0, 1024)
 			default:
 				item = append(item, val)
 			}
@@ -257,9 +264,9 @@ func ParseArgs() ([]string, []*DirectOpt, error) {
 		return nil, nil, errors.New("syntax error near unexpected token `newline'")
 	}
 	if len(item) != 0 {
-		if osSystem == "Windows_NT" {
-			item = item[:len(item)-1]
-		}
+		// if osSystem == "Windows_NT" {
+		// 	item = item[:len(item)-1]
+		// }
 		if Redirect != nil {
 			optList = append(optList, Redirect)
 			Redirect.path = string(item)
@@ -288,17 +295,17 @@ func isRedirect(val string) *DirectOpt {
 
 // 输出
 func outPut(val string, errVal string, out *bufio.Writer, reList []*DirectOpt) {
-	if errVal != "" && errVal[len(errVal)-1] != '\n' {
-		errVal += "\n"
+	if errVal != "" {
+		errVal = strings.ReplaceAll(errVal, "\n", "\r\n")
+		if errVal[len(errVal)-1] != '\n' {
+			errVal += "\r\n"
+		}
 	}
-	if val != "" && val[len(val)-1] != '\n' {
-		val += "\n"
-	}
-	if len(reList) == 0 {
-		out.WriteString(val)
-		out.WriteString(errVal)
-		out.Flush()
-		return
+	if val != "" {
+		val = strings.ReplaceAll(val, "\n", "\r\n")
+		if val[len(val)-1] != '\n' {
+			val += "\r\n"
+		}
 	}
 	stdOutFlag := false
 	stdErrFlag := false
@@ -312,8 +319,7 @@ func outPut(val string, errVal string, out *bufio.Writer, reList []*DirectOpt) {
 			err = reToFile(val, opt.path, opt.isAppend)
 		}
 		if err != nil {
-			out.WriteString(err.Error())
-			out.WriteByte('\n')
+			out.WriteString(err.Error() + "\r\n")
 			out.Flush()
 		}
 	}
