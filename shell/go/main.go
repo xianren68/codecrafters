@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -148,16 +149,43 @@ func handleCd(args []string) (string, error) {
 	}
 	return "", err
 }
-func autoComplete(args string) string {
+func autoComplete(args string) (res []string) {
 	if len(args) < 3 {
-		return ""
+		return
 	}
+	hash := make(map[string]bool, 10)
 	for key := range handlerMap {
 		if strings.HasPrefix(key, args) {
-			return key
+			if ok := hash[key]; !ok {
+				hash[key] = true
+				res = append(res, key)
+			}
+
 		}
 	}
-	return ""
+	pathEnv := os.Getenv("PATH")
+	split := ":" // 在Windows下使用;
+	if osSystem == "Windows_NT" {
+		split = ";"
+	}
+	for _, val := range strings.Split(pathEnv, split) {
+		files, err := os.ReadDir(val)
+		if err != nil {
+			continue
+		}
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), args) {
+				if flag, _ := isExecutable(file.Name()); flag {
+					if ok := hash[file.Name()]; !ok {
+						hash[file.Name()] = true
+						res = append(res, file.Name())
+					}
+				}
+			}
+		}
+	}
+	sort.Strings(res)
+	return
 }
 
 // ParseArgs 解析参数
@@ -168,6 +196,8 @@ func ParseArgs() ([]string, []*DirectOpt, error) {
 	inDoubleQuote := false
 	// 是否为转义字符后
 	escapeNext := false
+	// 是否是第二次tab
+	secondTab := false
 	// 解析出的每一项
 	item := make([]byte, 0, 1024)
 	// 是否重定向
@@ -195,11 +225,27 @@ func ParseArgs() ([]string, []*DirectOpt, error) {
 		if val == '\t' {
 			val := string(item)
 			str := autoComplete(val)
-			fmt.Print(str[len(val):] + " ") // 输出补全部分
-			res = append(res, str)
-			item = make([]byte, 0, 1024)
+			if len(str) == 0 {
+				fmt.Print("\a")
+
+			} else if len(str) == 1 {
+				fmt.Print(str[0][len(val):] + " ") // 输出补全部分
+				res = append(res, str[0])
+				item = make([]byte, 0, 1024)
+			} else {
+				if secondTab {
+					fmt.Print("\r\n")
+					fmt.Printf("%s", strings.Join(str, "  "))
+					fmt.Printf("\r\n$ %s", val)
+					secondTab = false
+				} else {
+					fmt.Print("\a") // 输出提示音
+					secondTab = true
+				}
+			}
 			continue
 		}
+		secondTab = false
 		out.WriteByte(val) // 输出到标准输出
 		out.Flush()
 		if inDoubleQuote {
@@ -264,9 +310,6 @@ func ParseArgs() ([]string, []*DirectOpt, error) {
 		return nil, nil, errors.New("syntax error near unexpected token `newline'")
 	}
 	if len(item) != 0 {
-		// if osSystem == "Windows_NT" {
-		// 	item = item[:len(item)-1]
-		// }
 		if Redirect != nil {
 			optList = append(optList, Redirect)
 			Redirect.path = string(item)
